@@ -1,0 +1,5 @@
+# Archivos que no van al repositorio
+*.zip
+*.key
+*.pem
+.env
