@@ -122,7 +122,9 @@ El override queda en `/etc/systemd/system/ollama.service.d/override.conf` (`syst
 | Poco espacio en `/` (5,6 GB libres) | LVM usaba la mitad de `sda3` | `lvextend -r -l +100%FREE` |
 | `apt update` sin conexión a `archive.ubuntu.com` | Falla del mirror o de la red | No afectó, los paquetes ya estaban instalados |
 
-## Pendiente para la entrega final
+## Reparto del trabajo
 
-- Quitar la regla de ufw del puerto 445 (SMB del taller): desde fuera solo deben verse 22, 80 y 443.
-- MariaDB con su datadir en `/srv/ia/mariadb`, la app PHP, Nginx con HTTPS, fail2ban y respaldos.
+| Integrante | Avance (9 nov) |
+|---|---|
+| Warner Mora | Configuración de la VM en VirtualBox, disco de datos, instalación de Ollama, primer commit |
+| Deiner Brenes | Creación del repositorio, revisión de la evidencia y del README, ... |
