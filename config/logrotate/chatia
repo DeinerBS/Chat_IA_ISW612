@@ -1,0 +1,10 @@
+/var/log/chatia/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    su chatia chatia
+    create 640 chatia chatia
+}
