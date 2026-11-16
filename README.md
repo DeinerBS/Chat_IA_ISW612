@@ -10,7 +10,12 @@ El diagrama de la arquitectura está en `docs/arquitectura.png` (fuente editable
 | `scripts/` | Scripts Bash de instalación y verificación |
 | `docs/arquitectura.png` / `.svg` | Diagrama de arquitectura |
 | `docs/bitacora-ia.md` | Bitácora de uso de IA |
-| `docs/evidencia/` | Salidas de los scripts de verificación |
+| `docs/evidencia/` | Salidas de los scripts y capturas de las pruebas |
+| `docs/pruebas-seguridad.md` | Las 8 pruebas de seguridad con resultados |
+| `docs/riesgos-11434.md` · `docs/decisiones-diseno.md` · `docs/puertos.md` | Investigación y tabla de puertos |
+| `app/` | App web PHP (login, roles, chat, historial, panel) |
+| `config/` | Configuración de Nginx, fail2ban y logrotate |
+| `pruebas/` | Scripts de ataque para PowerShell (ráfaga 429 y fuerza bruta) |
 
 ## Datos de nuestra VM
 
@@ -26,105 +31,54 @@ El diagrama de la arquitectura está en `docs/arquitectura.png` (fuente editable
 
 ---
 
-## Instalación paso a paso
+## Despliegue
 
-### 1. VirtualBox (con la VM apagada)
-
-- **Sistema:** 4 GB de RAM como mínimo, de 2 a 4 CPU.
-- **Red → Adaptador 1:** NAT o puente; es la salida a internet (apt y descarga de modelos).
-- **Red → Adaptador 2:** *Habilitar* → **Adaptador solo anfitrión** → `VirtualBox Host-Only Ethernet Adapter` (red `192.168.56.0/24`).
-- **Almacenamiento → Controlador SATA → Agregar disco duro → Crear:** VDI, reserva dinámica, 20 GB, nombre `ia-datos`.
-
-### 2. IP fija del adaptador host-only (en la consola de la VM)
+En una VM Ubuntu Server 24.04 con un disco de datos vacío de 20 GB y el adaptador Solo anfitrión:
 
 ```bash
-ip -br link                                   # nombre del 2.º adaptador: enp0s8
-sudo nano /etc/netplan/60-hostonly.yaml
-```
-```yaml
-network:
-  version: 2
-  ethernets:
-    enp0s8:
-      dhcp4: false
-      addresses: [192.168.56.10/24]
-```
-```bash
-sudo chmod 600 /etc/netplan/60-hostonly.yaml
-sudo netplan apply
-ip -br addr                                   # enp0s8 → 192.168.56.10/24
-```
-También se puede hacer con `sudo ./scripts/00-red-hostonly.sh enp0s8 192.168.56.10/24`.
-
-### 3. SSH desde el anfitrión
-
-```bash
-sudo apt update && sudo apt install -y openssh-server unzip
-sudo systemctl enable --now ssh
-sudo ufw allow from 192.168.56.0/24 to any port 22 proto tcp comment 'SSH host-only'
-```
-Desde Windows: `ssh warner@192.168.56.10`. Para copiar los archivos del repo a la VM: `scp` o `git clone`.
-
-### 4. Disco de datos
-
-```bash
-chmod +x scripts/*.sh
-lsblk -o NAME,SIZE,TYPE,MOUNTPOINTS           # el de 20G sin particiones: sdc
-sudo ./scripts/01-disco-datos.sh /dev/sdc     # pide escribir SI (mayúscula)
-grep /srv/ia /etc/fstab
+git clone https://github.com/DeinerBS/Chat_IA_ISW612.git && cd Chat_IA_ISW612
+sudo ./scripts/desplegar.sh /dev/sdc       # disco de datos; pide confirmar con SI y crear el admin
 ```
 
-### 5. Ampliar el disco del sistema (LVM)
+Antes del paso de seguridad, copiar la llave pública SSH a `~/.ssh/authorized_keys`: el script 07 desactiva las contraseñas solo si encuentra una llave.
 
-El instalador de Ubuntu dejó `/` con 11,5 GB de 23 GB. Se amplía antes de instalar Ollama:
-```bash
-sudo lvextend -r -l +100%FREE /dev/ubuntu-vg/ubuntu-lv
-df -h /
-```
+| Script | Qué configura |
+|---|---|
+| `00-red-hostonly.sh` | IP fija `192.168.56.10/24` en `enp0s8` |
+| `01-disco-datos.sh` | Disco de datos ext4 montado por UUID en `/srv/ia` |
+| `02-ollama.sh` | Ollama solo en `127.0.0.1:11434`, modelos en `/srv/ia/ollama/models` |
+| `03-mariadb.sh` | MariaDB con datadir en `/srv/ia/mariadb`, BD y usuario `chatia` |
+| `04-php-fpm.sh` | Pool PHP-FPM `chatia` con usuario propio |
+| `05-nginx.sh` | Nginx HTTPS (autofirmado), cabeceras y rate limiting |
+| `06-app.sh` | Código de la app, tablas y primer administrador |
+| `07-seguridad.sh` | ufw, sin Samba, SSH solo con llaves, fail2ban, logrotate |
+| `respaldo.sh` / `restaurar.sh` | Respaldo de BD y configuraciones en `/srv/ia/respaldos` y su restauración |
+| `comparar-modelos.py` | Mide 3 modelos y genera `docs/evidencia/comparacion-modelos.md` |
+| `verificar-avance.sh` | Junta la evidencia del estado del servidor |
 
-### 6. Ollama
+Uso: `https://192.168.56.10` (aceptar la advertencia del certificado autofirmado).
 
-```bash
-sudo ./scripts/02-ollama.sh llama3.2:1b
-```
+## Pruebas de seguridad
 
-### 7. Verificación
+Desde Windows, con nmap instalado (`winget install Insecure.Nmap`):
 
-```bash
-sudo reboot
-sudo ./scripts/verificar-avance.sh llama3.2:1b   # genera evidencia-avance-*.txt
-```
-Desde Windows debe **fallar**:
 ```powershell
-curl.exe -m 5 http://192.168.56.10:11434
+nmap -sS -sV -p- -T4 192.168.56.10
+powershell -ExecutionPolicy Bypass -File .\pruebas\rafaga-429.ps1
+powershell -ExecutionPolicy Bypass -File .\pruebas\fuerza-bruta-login.ps1 -Usuario empleado2
 ```
 
----
-
-## Qué hace cada script
-
-| Script | Qué configura | Detalle para la defensa |
-|---|---|---|
-| `00-red-hostonly.sh` | IP fija en el 2.º adaptador (netplan) | Sin gateway: la salida a internet es por el adaptador 1 |
-| `01-disco-datos.sh` | GPT → 1 partición → ext4 → `/srv/ia` en fstab por **UUID** | `/dev/sdc1` puede cambiar de nombre y el UUID no. `nofail` evita que la VM se quede trabada al arrancar si falta el disco |
-| `02-ollama.sh` | Instalador oficial + override de systemd | `OLLAMA_HOST=127.0.0.1:11434` (no se expone), `OLLAMA_MODELS=/srv/ia/ollama/models` (modelos en el disco de datos), `RequiresMountsFor=/srv/ia` (espera al montaje) |
-| `verificar-avance.sh` | Solo lee el estado y guarda la evidencia | — |
-
-El override queda en `/etc/systemd/system/ollama.service.d/override.conf` (`systemctl cat ollama`).
+Resultados en `docs/pruebas-seguridad.md`.
 
 ## Problemas que tuvimos
 
 | Problema | Causa | Solución |
 |---|---|---|
-| `netplan apply` dejó una IP equivocada | Error al escribir la IP (`192.186`) | `sed -i 's/192.186/192.168/'`, `ip addr flush dev enp0s8`, `netplan apply` |
-| `cat` del netplan: *Permission denied* | El archivo quedó con permisos 600 (solo root) | `sudo cat` |
-| `ssh`: *Connection timed out* con ping funcionando | ufw solo permitía el 22 desde `192.168.50.0/24` | Regla para `192.168.56.0/24` |
-| Poco espacio en `/` (5,6 GB libres) | LVM usaba la mitad de `sda3` | `lvextend -r -l +100%FREE` |
-| `apt update` sin conexión a `archive.ubuntu.com` | Falla del mirror o de la red | No afectó, los paquetes ya estaban instalados |
-
-## Reparto del trabajo
-
-| Integrante | Avance (9 nov) |
-|---|---|
-| Warner Mora | Configuración de la VM en VirtualBox, disco de datos, instalación de Ollama, primer commit |
-| Deiner Brenes | Creación del repositorio, revisión de la evidencia y del README, ... |
+| fail2ban no contaba los intentos SSH | En Ubuntu 24.04 el servicio es `ssh.service`, no `sshd.service` | `journalmatch` en `config/fail2ban/jail.local` |
+| El bloqueo temporal del login no funcionaba | PHP en UTC comparaba fechas en hora local de MariaDB | Comparación en SQL + `date.timezone` en el pool |
+| El 429 llegaba antes que el bloqueo de la app | Cada intento contaba el POST y el GET de la redirección | `map` para que la zona `login` cuente solo POST |
+| El modelo se negaba a dar consejos de contraseñas | La instrucción de sistema mencionaba "contraseñas" como algo prohibido | Se reescribió la regla en `app/src/ollama.php` |
+| `/srv/ia` no se montó en un arranque | udev no registró el sistema de archivos | `udevadm trigger` + `mount -a` |
+| `ssh` daba *timeout* | ufw del taller solo permitía 22 desde 192.168.50.0/24 | Regla para 192.168.56.0/24 |
+| Poco espacio en `/` | LVM a la mitad del disco | `lvextend -r -l +100%FREE` |
+| Samba del taller expuesto (139, 445) | VM reutilizada | Servicio desactivado y regla de ufw borrada |

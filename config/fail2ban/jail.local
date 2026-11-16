@@ -8,6 +8,8 @@ banaction = ufw
 [sshd]
 enabled = true
 backend = systemd
+# En Ubuntu 24.04 la unidad es ssh.service (fail2ban busca sshd.service por defecto)
+journalmatch = _SYSTEMD_UNIT=ssh.service + _COMM=sshd
 
 # Logins fallidos de la app (log propio); se bloquean 80 y 443
 [chatia-login]

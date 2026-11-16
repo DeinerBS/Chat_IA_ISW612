@@ -3,3 +3,4 @@
 *.key
 *.pem
 .env
+__pycache__/
